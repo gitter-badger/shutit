@@ -480,6 +480,7 @@ def parse_args(shutit):
 	sub_parsers['build'].add_argument('--save', help='Perform docker save to a tar file', const=True, default=False, action='store_const')
 	sub_parsers['build'].add_argument('--push', help='Push to a repo', const=True, default=False, action='store_const')
 	sub_parsers['build'].add_argument('--distro', help='Specify the distro type', default='', choices=('ubuntu','debian','steamos','red hat','centos','fedora','shutit'))
+	sub_parsers['build'].add_argument('--nofsync', help='Turn off fsync for a faster build. Use with caution.', default=False, const=True, action='store_const')
 
 	sub_parsers['list_configs'].add_argument('--history', help='Show config with history', const=True, default=False, action='store_const')
 	sub_parsers['list_modules'].add_argument('--long', help='Show extended module info, including ordering', const=True, default=False, action='store_const')
@@ -596,6 +597,9 @@ def parse_args(shutit):
 		cfg['repository']['export'] = args.export
 		cfg['repository']['save']   = args.save
 		cfg['build']['distro_override']     = args.distro
+		cfg['build']['nofsync']     = args.nofsync
+		if args.nofsync:
+			cfg['build']['command_prefix'].append('eatmydata')
 	elif cfg['action']['list_configs']:
 		cfg['list_configs']['cfghistory'] = args.history
 	elif cfg['action']['list_modules']:

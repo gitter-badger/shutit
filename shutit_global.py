@@ -253,6 +253,7 @@ class ShutIt(object):
 		cfg['environment'][environment_id]['modules_ready']                = [] # has been checked for readiness and is ready (in this build)
 		# Installed file info
 		cfg['environment'][environment_id]['modules_recorded']             = []
+		cfg['environment'][environment_id]['commands_available']           = []
 		cfg['environment'][environment_id]['modules_recorded_cache_valid'] = False
 		cfg['environment'][environment_id]['setup']                        = False
 		# Exempt the ORIGIN_ENV from getting distro info
@@ -327,7 +328,8 @@ class ShutIt(object):
 	         exit_values=None,
 	         echo=False,
 	         escape=False,
-	         retry=3):
+	         retry=3,
+		     do_prefix=True):
 		"""Send string as a shell command, and wait until the expected output
 		is seen (either a string or any from a list of strings) before
 		returning. The expected string will default to the currently-set
@@ -347,6 +349,7 @@ class ShutIt(object):
 		@param echo: Whether to suppress any logging output from pexpect to the terminal or not.  We don't record the command if this is set to False unless record_command is explicitly passed in as True.
 		@param escape: Whether to escape the characters in a bash-friendly way, ie $'\Uxxxxxx'
 		@param retry: Number of times to retry the command if the first attempt doesn't work. Useful if going to the network.
+		@param do_prefix: Whether to prefix commands with configured prefixes, (eg eatmydata)
 		@return: The pexpect return value (ie which expected string in the list matched)
 		@rtype: string
 		"""
@@ -389,6 +392,10 @@ class ShutIt(object):
 						break
 			if ok_to_record:
 				self.shutit_command_history.append(send)
+		if do_prefix:
+			for command in cfg['build']['command_prefix']:
+				if self.command_available(command, child=child, expect=expect):
+					send = command + ' ' + send
 		if cfg['build']['debug'] and send != None:
 			self.log('===================================================' + 
 				'=============================')
@@ -1164,6 +1171,25 @@ class ShutIt(object):
 			return False
 
 
+	def command_available(self, command, expect=None, child=None):
+		# Might be called before any env is set up so wrap in a catch block.
+		res = False
+		try:
+			cfg = self.cfg
+			if command in cfg['environment'][cfg['build']['current_environment_id']]['commands_available']:
+				res = True
+			child = child or self.get_default_child()
+			expect = expect or self.get_default_expect()
+			# Don't do_prefix or you'll get a recursive infinite loop!
+			if self.send_and_get_output(' command -v ' + command, expect=expect, child=child, do_prefix=False) != '':
+				cfg['environment'][cfg['build']['current_environment_id']]['commands_available'].append(command)
+				res = True
+		except:
+			pass
+		return res
+			
+
+
 	def is_shutit_installed(self, module_id):
 		"""Helper proc to determine whether shutit has installed already here by placing a file in the db. 
 		"""
@@ -1507,21 +1533,22 @@ class ShutIt(object):
 
 
 
-	def send_and_get_output(self, send, expect=None, child=None, retry=3, strip=True):
+	def send_and_get_output(self, send, expect=None, child=None, retry=3, strip=True, do_prefix=True):
 		"""Returns the output of a command run. send() is called, and exit is not checked.
 
-		@param send:     See send()
-		@param expect:   See send()
-		@param child:    See send()
-		@param retry:    Number of times to retry command (default 3)
-		@param strip:    Whether to strip output (defaults to True)
+		@param send:      See send()
+		@param expect:    See send()
+		@param child:     See send()
+		@param do_prefix: See send()
+		@param retry:     Number of times to retry command (default 3)
+		@param strip:     Whether to strip output (defaults to True)
 
-		@type retry:     integer
-		@type strip:     boolean
+		@type retry:      integer
+		@type strip:      boolean
 		"""
 		child = child or self.get_default_child()
 		expect = expect or self.get_default_expect()
-		self.send(send, check_exit=False, retry=3,echo=False)
+		self.send(send, child=child, expect=expect, check_exit=False, retry=3, echo=False, do_prefix=do_prefix)
 		if strip:
 			return shutit.get_default_child().before.strip(send).strip()
 		else:
@@ -1639,7 +1666,6 @@ class ShutIt(object):
 		expect = expect or self.get_default_expect()
 		cfg = self.cfg
 		if options is None: options = {}
-		print cfg['environment'][cfg['build']['current_environment_id']]
 		install_type = cfg['environment'][cfg['build']['current_environment_id']]['install_type']
 		if install_type == 'src':
 			# If this is a src build, we assume it's already installed.
@@ -1835,7 +1861,7 @@ class ShutIt(object):
 				# and times out very frequently. This workaround seems to work, but I
 				# haven't figured out why yet - imiell.
 				expect=['\r\n' + cfg['expect_prompts'][prompt_name]],
-				fail_on_empty_before=False, timeout=5, child=child)
+				fail_on_empty_before=False, timeout=5, child=child, do_prefix=False)
 		if set_default_expect:
 			self.log('Resetting default expect to: ' +
 				cfg['expect_prompts'][prompt_name])
@@ -1868,7 +1894,7 @@ class ShutIt(object):
 		self.setup_environment()
 
 
-	def get_distro_info(self, environment_id, child=None, container=True):
+	def get_distro_info(self, environment_id, child=None, container=True, expect=None):
 		"""Get information about which distro we are using,
 		placing it in the cfg['environment'][environment_id] as a side effect.
 
@@ -1888,6 +1914,7 @@ class ShutIt(object):
 		@type container:    boolean
 		"""
 		child = child or self.get_default_child()
+		expect = expect or self.get_default_expect()
 		install_type   = ''
 		distro         = ''
 		distro_version = ''
@@ -1895,50 +1922,6 @@ class ShutIt(object):
 		cfg['environment'][environment_id]['install_type']      = ''
 		cfg['environment'][environment_id]['distro']            = ''
 		cfg['environment'][environment_id]['distro_version']    = ''
-		# A list of OS Family members
-		# RedHat    = RedHat, Fedora, CentOS, Scientific, SLC, Ascendos, CloudLinux, PSBM, OracleLinux, OVS, OEL, Amazon, XenServer 
-		# Debian    = Ubuntu, Debian
-		# Suse      = SLES, SLED, OpenSuSE, Suse
-		# Gentoo    = Gentoo, Funtoo
-		# Archlinux = Archlinux
-		# Mandrake  = Mandriva, Mandrake
-		# Solaris   = Solaris, Nexenta, OmniOS, OpenIndiana, SmartOS
-		# AIX       = AIX
-		# Alpine    = Alpine
-		# Darwin    = MacOSX
-		# FreeBSD   = FreeBSD
-		# HP-UK     = HPUX
-
-		#    OSDIST_DICT = { '/etc/redhat-release': 'RedHat',
-		#                    '/etc/vmware-release': 'VMwareESX',
-		#                    '/etc/openwrt_release': 'OpenWrt',
-		#                    '/etc/system-release': 'OtherLinux',
-		#                    '/etc/alpine-release': 'Alpine',
-		#                    '/etc/release': 'Solaris',
-		#                    '/etc/arch-release': 'Archlinux',
-		#                    '/etc/SuSE-release': 'SuSE',
-		#                    '/etc/gentoo-release': 'Gentoo',
-		#                    '/etc/os-release': 'Debian' }
-		#    SELINUX_MODE_DICT = { 1: 'enforcing', 0: 'permissive', -1: 'disabled' }
-		#
-		#    # A list of dicts.  If there is a platform with more than one
-		#    # package manager, put the preferred one last.  If there is an
-		#    # ansible module, use that as the value for the 'name' key.
-		#    PKG_MGRS = [ { 'path' : '/usr/bin/yum',         'name' : 'yum' },
-		#                 { 'path' : '/usr/bin/apt-get',     'name' : 'apt' },
-		#                 { 'path' : '/usr/bin/zypper',      'name' : 'zypper' },
-		#                 { 'path' : '/usr/sbin/urpmi',      'name' : 'urpmi' },
-		#                 { 'path' : '/usr/bin/pacman',      'name' : 'pacman' },
-		#                 { 'path' : '/bin/opkg',            'name' : 'opkg' },
-		#                 { 'path' : '/opt/local/bin/pkgin', 'name' : 'pkgin' },
-		#                 { 'path' : '/opt/local/bin/port',  'name' : 'macports' },
-		#                 { 'path' : '/sbin/apk',            'name' : 'apk' },
-		#                 { 'path' : '/usr/sbin/pkg',        'name' : 'pkgng' },
-		#                 { 'path' : '/usr/sbin/swlist',     'name' : 'SD-UX' },
-		#                 { 'path' : '/usr/bin/emerge',      'name' : 'portage' },
-		#                 { 'path' : '/usr/sbin/pkgadd',     'name' : 'svr4pkg' },
-		#                 { 'path' : '/usr/bin/pkg',         'name' : 'pkg' },
-		#    ]
 		if cfg['build']['distro_override'] != '':
 			key = cfg['build']['distro_override']
 			distro = cfg['build']['distro_override']
@@ -1991,6 +1974,9 @@ class ShutIt(object):
 		cfg['environment'][environment_id]['install_type']   = install_type
 		cfg['environment'][environment_id]['distro']         = distro
 		cfg['environment'][environment_id]['distro_version'] = distro_version
+		cfg['environment'][environment_id]['commands_available'] = []
+		for command in cfg['build']['command_prefix']:
+			self.install(command, child=child, expect=expect)
 		return
 
 
@@ -2416,10 +2402,11 @@ def init():
 	cfg['build']['interactive'] = 1 # Default to true until we know otherwise
 	cfg['build']['build_log']   = None
 	cfg['build']['report']      = ''
-	cfg['build']['report_final_messages'] = ''
 	cfg['build']['debug']       = False
 	cfg['build']['completed']   = False
-	cfg['build']['distro_override'] = ''
+	cfg['build']['report_final_messages'] = ''
+	cfg['build']['distro_override']       = ''
+	cfg['build']['command_prefix']        = []
 	cfg['target']               = {}
 	cfg['environment']          = {}
 	cfg['host']                 = {}
@@ -2474,3 +2461,49 @@ def init():
 
 shutit = init()
 
+
+# May be useful later:
+		# A list of OS Family members
+		# RedHat    = RedHat, Fedora, CentOS, Scientific, SLC, Ascendos, CloudLinux, PSBM, OracleLinux, OVS, OEL, Amazon, XenServer 
+		# Debian    = Ubuntu, Debian
+		# Suse      = SLES, SLED, OpenSuSE, Suse
+		# Gentoo    = Gentoo, Funtoo
+		# Archlinux = Archlinux
+		# Mandrake  = Mandriva, Mandrake
+		# Solaris   = Solaris, Nexenta, OmniOS, OpenIndiana, SmartOS
+		# AIX       = AIX
+		# Alpine    = Alpine
+		# Darwin    = MacOSX
+		# FreeBSD   = FreeBSD
+		# HP-UK     = HPUX
+
+		#    OSDIST_DICT = { '/etc/redhat-release': 'RedHat',
+		#                    '/etc/vmware-release': 'VMwareESX',
+		#                    '/etc/openwrt_release': 'OpenWrt',
+		#                    '/etc/system-release': 'OtherLinux',
+		#                    '/etc/alpine-release': 'Alpine',
+		#                    '/etc/release': 'Solaris',
+		#                    '/etc/arch-release': 'Archlinux',
+		#                    '/etc/SuSE-release': 'SuSE',
+		#                    '/etc/gentoo-release': 'Gentoo',
+		#                    '/etc/os-release': 'Debian' }
+		#    SELINUX_MODE_DICT = { 1: 'enforcing', 0: 'permissive', -1: 'disabled' }
+		#
+		#    # A list of dicts.  If there is a platform with more than one
+		#    # package manager, put the preferred one last.  If there is an
+		#    # ansible module, use that as the value for the 'name' key.
+		#    PKG_MGRS = [ { 'path' : '/usr/bin/yum',         'name' : 'yum' },
+		#                 { 'path' : '/usr/bin/apt-get',     'name' : 'apt' },
+		#                 { 'path' : '/usr/bin/zypper',      'name' : 'zypper' },
+		#                 { 'path' : '/usr/sbin/urpmi',      'name' : 'urpmi' },
+		#                 { 'path' : '/usr/bin/pacman',      'name' : 'pacman' },
+		#                 { 'path' : '/bin/opkg',            'name' : 'opkg' },
+		#                 { 'path' : '/opt/local/bin/pkgin', 'name' : 'pkgin' },
+		#                 { 'path' : '/opt/local/bin/port',  'name' : 'macports' },
+		#                 { 'path' : '/sbin/apk',            'name' : 'apk' },
+		#                 { 'path' : '/usr/sbin/pkg',        'name' : 'pkgng' },
+		#                 { 'path' : '/usr/sbin/swlist',     'name' : 'SD-UX' },
+		#                 { 'path' : '/usr/bin/emerge',      'name' : 'portage' },
+		#                 { 'path' : '/usr/sbin/pkgadd',     'name' : 'svr4pkg' },
+		#                 { 'path' : '/usr/bin/pkg',         'name' : 'pkg' },
+		#    ]
