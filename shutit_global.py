@@ -210,6 +210,7 @@ class ShutIt(object):
 		cfg = self.cfg
 		return cfg['environment'][cfg['build']['current_environment_id']]
 
+
 	def setup_environment(self, prefix, expect=None, child=None):
 		"""If we are in a new environment then set up a new data structure.
 		A new environment is a new machine environment, whether that's
@@ -222,7 +223,7 @@ class ShutIt(object):
 		cfg = self.cfg
 		environment_id_dir = cfg['build']['shutit_state_dir'] + '/environment_id'
 		if self.file_exists(environment_id_dir,expect=expect,child=child,directory=True):
-			files = self.ls(environment_id_dir)
+			files = self.ls(environment_id_dir,child=child,expect=expect)
 			if len(files) != 1 or type(files) != list:
 				if len(files) == 2 and (files[0] == 'ORIGIN_ENV' or files[1] == 'ORIGIN_ENV'):
 					for f in files:
@@ -231,7 +232,7 @@ class ShutIt(object):
 							cfg['build']['current_environment_id'] = environment_id
 							break
 				else:
-					self.fail('Wrong number of files in environment_id_dir: ' + environment_id_dir)
+					self.fail('Wrong number of files in environment_id_dir: ' + environment_id_dir + '\n' + str(files))
 					environment_id = files[0]
 			else:
 				environment_id = files[0]
@@ -259,9 +260,9 @@ class ShutIt(object):
 		# Exempt the ORIGIN_ENV from getting distro info
 		if prefix != 'ORIGIN_ENV':
 			self.get_distro_info(environment_id)
-		self.send('mkdir -p ' + environment_id_dir)
+		self.send('mkdir -p ' + environment_id_dir, do_prefix=False)
 		fname = environment_id_dir + '/' + environment_id
-		self.send('touch ' + fname)
+		self.send('touch ' + fname, do_prefix=False)
 		cfg['environment'][environment_id]['setup']                        = True
 		return environment_id
 
@@ -277,7 +278,8 @@ class ShutIt(object):
 	              fail_on_empty_before=True,
 	              record_command=True,
 	              exit_values=None,
-	              echo=None):
+	              echo=None,
+	              do_prefix=True):
 		"""Multisend. Same as send, except it takes multiple sends and expects in a dict that are
 		processed while waiting for the end "expect" argument supplied.
 
@@ -291,6 +293,7 @@ class ShutIt(object):
 		@param record_command:       See send()
 		@param exit_values:          See send()
 		@param echo:                 See send()
+		@param do_prefix:            See send()
 
 			- expect - final expect we want to see. defaults to child.get_default_expect()
 		"""
@@ -310,7 +313,7 @@ class ShutIt(object):
 				n_breakout_items += 1
 		while True:
 			# If it's the last n items in the list, it's the breakout one.
-			res = self.send(send_iteration, expect=expect_list, child=child, check_exit=check_exit, fail_on_empty_before=fail_on_empty_before, timeout=timeout, record_command=record_command, exit_values=exit_values, echo=echo)
+			res = self.send(send_iteration, expect=expect_list, child=child, check_exit=check_exit, fail_on_empty_before=fail_on_empty_before, timeout=timeout, record_command=record_command, exit_values=exit_values, echo=echo, do_prefix=do_prefix)
 			if res >= len(expect_list) - n_breakout_items:
 				break
 			else:
@@ -511,17 +514,18 @@ class ShutIt(object):
 		return True
 
 
-	def run_script(self, script, expect=None, child=None, in_shell=True):
+	def run_script(self, script, expect=None, child=None, in_shell=True, do_prefix=False):
 		"""Run the passed-in string as a script on the target's command line.
 
-		@param script:   String representing the script. It will be de-indented
-						 and stripped before being run.
-		@param expect:   See send()
-		@param child:    See send()
-		@param in_shell: Indicate whether we are in a shell or not. (Default: True)
+		@param script:    String representing the script. It will be de-indented
+						  and stripped before being run.
+		@param expect:    See send()
+		@param child:     See send()
+		@param do_prefix: See send()
+		@param in_shell:  Indicate whether we are in a shell or not. (Default: True)
 
-		@type script:    string
-		@type in_shell:  boolean
+		@type script:     string
+		@type in_shell:   boolean
 		"""
 		child = child or self.get_default_child()
 		expect = expect or self.get_default_expect()
@@ -539,20 +543,20 @@ class ShutIt(object):
 		# Send the script and run it in the manner specified
 		if cfg['build']['delivery'] == 'target' and in_shell:
 				script = ('set -o xtrace \n\n' + script + '\n\nset +o xtrace')
-		self.send('mkdir -p ' + cfg['build']['shutit_state_dir'] + '/scripts', expect, child)
-		self.send_file(cfg['build']['shutit_state_dir'] + '/scripts/shutit_script.sh', script)
-		self.send('chmod +x ' + cfg['build']['shutit_state_dir'] + '/scripts/shutit_script.sh', expect, child)
+		self.send('mkdir -p ' + cfg['build']['shutit_state_dir'] + '/scripts', expect, child, do_prefix=do_prefix)
+		self.send_file(cfg['build']['shutit_state_dir'] + '/scripts/shutit_script.sh', script, do_prefix=do_prefix)
+		self.send('chmod +x ' + cfg['build']['shutit_state_dir'] + '/scripts/shutit_script.sh', expect, child, do_prefix=do_prefix)
 		self.shutit_command_history.append\
 			('    ' + script.replace('\n', '\n    '))
 		if in_shell:
-			ret = self.send('. ' + cfg['build']['shutit_state_dir'] + '/scripts/shutit_script.sh', expect, child)
+			ret = self.send('. ' + cfg['build']['shutit_state_dir'] + '/scripts/shutit_script.sh', expect, child, do_prefix=do_prefix)
 		else:
-			ret = self.send(cfg['build']['shutit_state_dir'] + '/scripts/shutit_script.sh', expect, child)
-		self.send('rm -f ' + cfg['build']['shutit_state_dir'] + '/scripts/shutit_script.sh', expect, child)
+			ret = self.send(cfg['build']['shutit_state_dir'] + '/scripts/shutit_script.sh', expect, child, do_prefix=do_prefix)
+		self.send('rm -f ' + cfg['build']['shutit_state_dir'] + '/scripts/shutit_script.sh', expect, child, do_prefix=do_prefix)
 		return ret
 
 
-	def send_file(self, path, contents, expect=None, child=None, log=True, truncate=False):
+	def send_file(self, path, contents, expect=None, child=None, log=True, truncate=False, do_prefix=True):
 		"""Sends the passed-in string as a file to the passed-in path on the
 		target.
 
@@ -560,6 +564,7 @@ class ShutIt(object):
 		@param contents:    Contents of file as a string. See log.
 		@param expect:      See send()
 		@param child:       See send()
+		@param do_prefix:   See send()
 		@param log:         Log the file contents if in debug.
 
 		@type path:         string
@@ -585,7 +590,7 @@ class ShutIt(object):
 			# If we're on the root env (ie the same one that python is running on,
 			# then use python.
 				if truncate and self.file_exists(path):
-					self.send('rm -f ' + path, expect=expect, child=child)
+					self.send('rm -f ' + path, expect=expect, child=child, do_prefix=do_prefix)
 				for line in contents.split('\n'):
 					self.add_line_to_file(line, path)
 		else:
@@ -597,7 +602,7 @@ class ShutIt(object):
 			f.truncate(0)
 			f.write(contents)
 			f.close()
-			shutit.send('cat ' + tmpfile + ' | ' + cfg['host']['docker_executable'] + ' exec -i ' + cfg['target']['container_id'] + " bash -c 'cat > " + path + "'", child=host_child, expect=cfg['expect_prompts']['origin_prompt'])
+			shutit.send('cat ' + tmpfile + ' | ' + cfg['host']['docker_executable'] + ' exec -i ' + cfg['target']['container_id'] + " bash -c 'cat > " + path + "'", child=host_child, expect=cfg['expect_prompts']['origin_prompt'], do_prefix=do_prefix)
 			os.remove(tmpfile)
 
 
@@ -606,20 +611,22 @@ class ShutIt(object):
 	          expect=None,
 	          child=None,
 	          timeout=3600,
-	          log=True):
+	          log=True,
+	          do_prefix=True):
 		"""How to change directory will depend on whether we are in delivery mode bash or docker.
 
 		@param path:          Path to send file to.
 		@param expect:        See send()
 		@param child:         See send()
 		@param timeout:       Timeout on response
+		@param do_prefix:     See send()
 		@param log:           Arg to pass to send_file (default True)
 		"""
 		child = child or self.get_default_child()
 		expect = expect or self.get_default_expect()
 		cfg = self.cfg
 		if cfg['build']['delivery'] in ('bash','dockerfile'):
-			self.send('cd ' + path, expect=expect, child=child, timeout=timeout)
+			self.send('cd ' + path, expect=expect, child=child, timeout=timeout, do_prefix=do_prefix)
 		elif cfg['build']['delivery'] == 'target' or cfg['build']['delivery'] == 'ssh':
 			os.chdir(path)
 		else:
@@ -632,12 +639,14 @@ class ShutIt(object):
 	                   expect=None,
 	                   child=None,
 	                   timeout=3600,
-	                   log=True):
+	                   log=True,
+	                   do_prefix=True):
 		"""Send file from host machine to given path
 
 		@param path:          Path to send file to.
 		@param hostfilepath:  Path to file from host to send to target.
 		@param expect:        See send()
+		@param do_prefix:     See send()
 		@param child:         See send()
 		@param log:           arg to pass to send_file (default True)
 
@@ -649,16 +658,16 @@ class ShutIt(object):
 		expect = expect or self.get_default_expect()
 		cfg = self.cfg
 		if cfg['build']['delivery'] in ('bash','dockerfile'):
-			self.send('pushd ' + cfg['environment'][cfg['build']['current_environment_id']]['module_root_dir'])
-			self.send('cp -r ' + hostfilepath + ' ' + path,expect=expect, child=child, timeout=timeout)
-			self.send('popd')
+			self.send('pushd ' + cfg['environment'][cfg['build']['current_environment_id']]['module_root_dir'], do_prefix=do_prefix, child=child, expect=expect)
+			self.send('cp -r ' + hostfilepath + ' ' + path,expect=expect, child=child, timeout=timeout, do_prefix=do_prefix)
+			self.send('popd', do_prefix=do_prefix, child=child, expect=expect)
 		else:
 			if os.path.isfile(hostfilepath):
 				self.send_file(path, open(hostfilepath).read(), expect=expect, 
-					child=child, log=log)
+					child=child, log=log, do_prefix=do_prefix)
 			elif os.path.isdir(hostfilepath):
 				self.send_host_dir(path, hostfilepath, expect=expect,
-					child=child, log=log)
+					child=child, log=log, do_prefix=do_prefix)
 			else:
 				shutit.fail('send_host_file - file: ' + hostfilepath +
 					' does not exist as file or dir. cwd is: ' + os.getcwd(),
@@ -670,7 +679,8 @@ class ShutIt(object):
 					  hostfilepath,
 					  expect=None,
 					  child=None,
-					  log=True):
+					  log=True,
+	                  do_prefix=True):
 		"""Send directory and all contents recursively from host machine to
 		given path.  It will automatically make directories on the target.
 
@@ -679,6 +689,7 @@ class ShutIt(object):
 		@param expect:        See send()
 		@param child:         See send()
 		@param log:           Arg to pass to send_file (default True)
+		@param do_prefix:     See send()
 
 		@type path:          string
 		@type hostfilepath:  string
@@ -691,18 +702,18 @@ class ShutIt(object):
 			subfolders.sort()
 			files.sort()
 			for subfolder in subfolders:
-				self.send('mkdir -p ' + path + '/' + subfolder)
+				self.send('mkdir -p ' + path + '/' + subfolder, do_prefix=do_prefix)
 				self.log('send_host_dir recursing to: ' + hostfilepath +
 					'/' + subfolder)
 				self.send_host_dir(path + '/' + subfolder, hostfilepath +
-					'/' + subfolder, expect=expect, child=child, log=log)
+					'/' + subfolder, expect=expect, child=child, log=log, do_prefix=do_prefix)
 			for fname in files:
 				hostfullfname = os.path.join(root, fname)
 				targetfname = os.path.join(path, fname)
 				self.log('send_host_dir sending file ' + hostfullfname + ' to ' + 
 					'target file: ' + targetfname)
 				self.send_file(targetfname, open(hostfullfname).read(), 
-					expect=expect, child=child, log=log)
+					expect=expect, child=child, log=log, do_prefix=do_prefix)
 
 
 	def host_file_exists(self, filename, directory=False):
@@ -724,12 +735,13 @@ class ShutIt(object):
 
 
 
-	def file_exists(self, filename, expect=None, child=None, directory=False):
+	def file_exists(self, filename, expect=None, child=None, directory=False, do_prefix=True):
 		"""Return True if file exists on the target host, else False
 
 		@param filename:   Filename to determine the existence of.
 		@param expect:     See send()
 		@param child:      See send()
+		@param do_prefix:  See send()
 		@param directory:  Indicate that the file is a directory.
 
 		@type filename:    string
@@ -743,7 +755,7 @@ class ShutIt(object):
 		test = ' test %s %s' % ('-d' if directory is True else '-a', filename)
 		self.send(test +
 			' && echo FILEXIST-""FILFIN || echo FILNEXIST-""FILFIN',
-			expect=expect, child=child, check_exit=False, record_command=False)
+			expect=expect, child=child, check_exit=False, record_command=False, do_prefix=do_prefix)
 		res = self.match_string(child.before,
 			'^(FILEXIST|FILNEXIST)-FILFIN$')
 		ret = False
@@ -766,6 +778,7 @@ class ShutIt(object):
 		@param filename:  Filename to get permissions of.
 		@param expect:    See send()
 		@param child:     See send()
+		@param do_prefix: See send()
 
 		@type filename:   string
 
@@ -774,7 +787,7 @@ class ShutIt(object):
 		child = child or self.get_default_child()
 		expect = expect or self.get_default_expect()
 		cmd = 'stat -c %a ' + filename
-		self.send(cmd, expect, child=child, check_exit=False)
+		self.send(cmd, expect, child=child, check_exit=False, do_prefix=False)
 		res = self.match_string(child.before, '([0-9][0-9][0-9])')
 		return res
 
@@ -786,7 +799,8 @@ class ShutIt(object):
 							  expect=None,
 							  child=None,
 							  match_regexp=None,
-							  literal=False):
+							  literal=False,
+	                          do_prefix=True):
 		"""Removes line from file, if it exists.
 		Must be exactly the line passed in to match.
 		Returns True if there were no problems, False if there were.
@@ -795,6 +809,7 @@ class ShutIt(object):
 		@param filename       Filename to remove it from.
 		@param expect:        See send()
 		@param child:         See send()
+		@param do_prefix:     See send()
 		@param match_regexp:  If supplied, a regexp to look for in the file
 		                      instead of the line itself,
 		                      handy if the line has awkward characters in it.
@@ -825,7 +840,8 @@ class ShutIt(object):
 							  tmp_filename, 
 							  expect=expect,
 							  child=child,
-							  exit_values=['0', '1'])
+							  exit_values=['0', '1'],
+					          do_prefix=do_prefix)
 				else:
 					#            v the space is intentional, to avoid polluting bash history.
 					self.send(""" grep -v '^""" + 
@@ -836,7 +852,8 @@ class ShutIt(object):
 							  tmp_filename,
 							  expect=expect,
 							  child=child, 
-							  exit_values=['0', '1'])
+							  exit_values=['0', '1'],
+					          do_prefix=do_prefix)
 			else:
 				if match_regexp == None:
 					#          v the space is intentional, to avoid polluting bash history.
@@ -848,7 +865,8 @@ class ShutIt(object):
 							  tmp_filename,
 							  expect=expect,
 							  child=child,
-							  exit_values=['0', '1'])
+							  exit_values=['0', '1'],
+					          do_prefix=do_prefix)
 				else:
 					#          v the space is intentional, to avoid polluting bash history.
 					self.send(' grep -v "^' +
@@ -859,12 +877,13 @@ class ShutIt(object):
 							  tmp_filename,
 							  expect=expect,
 							  child=child,
-							  exit_values=['0', '1'])
+							  exit_values=['0', '1'],
+					          do_prefix=do_prefix)
 			self.send('cat ' + tmp_filename + ' > ' + filename,
 					  expect=expect, child=child,
-					  check_exit=False)
+					  check_exit=False, do_prefix=do_prefix)
 			self.send('rm -f ' + tmp_filename, expect=expect, child=child,
-				exit_values=['0', '1'])
+				exit_values=['0', '1'], do_prefix=do_prefix)
 		return True
 						 
 
@@ -875,7 +894,8 @@ class ShutIt(object):
 	                     child=None,
 	                     match_regexp=None,
 	                     force=True,
-	                     literal=False):
+	                     literal=False,
+	                     do_prefix=True):
 		"""
 		Adds line to file if it doesn't exist (unless Force is set,
 		which it is by default).
@@ -891,6 +911,7 @@ class ShutIt(object):
 		@param filename:      Filename to add it to.
 		@param expect:        See send()
 		@param child:         See send()
+		@param do_prefix:     See send()
 		@param match_regexp:  If supplied, a regexp to look for in the file
 		                      instead of the line itself,
 		                      handy if the line has awkward characters in it.
@@ -921,7 +942,7 @@ class ShutIt(object):
 						if not self.file_exists(filename, expect=expect, child=child):
 							# We touch the file if it doesn't exist already.
 							self.send('touch ' + filename, expect=expect, child=child,
-								check_exit=False)
+								check_exit=False, do_prefix=do_prefix)
 							created_file = True
 						#            v the space is intentional, to avoid polluting bash history.
 						self.send(""" grep -w '^""" + 
@@ -932,12 +953,13 @@ class ShutIt(object):
 								  tmp_filename, 
 								  expect=expect,
 								  child=child,
-								  exit_values=['0', '1'])
+								  exit_values=['0', '1'],
+						          do_prefix=do_prefix)
 					else:
 						if not self.file_exists(filename, expect=expect, child=child):
 							# We touch the file if it doesn't exist already.
 							self.send('touch ' + filename, expect=expect, child=child,
-								check_exit=False)
+								check_exit=False, do_prefix=do_prefix)
 							created_file = True
 						#            v the space is intentional, to avoid polluting bash history.
 						self.send(""" grep -w '^""" + 
@@ -948,30 +970,31 @@ class ShutIt(object):
 								  tmp_filename,
 								  expect=expect,
 								  child=child, 
-								  exit_values=['0', '1'])
+								  exit_values=['0', '1'],
+						          do_prefix=do_prefix)
 				if not self.file_exists(filename, expect=expect, child=child):
 					# We touch the file if it doesn't exist already.
 					self.send('touch ' + filename, expect=expect, child=child,
-						check_exit=False)
+						check_exit=False, do_prefix=do_prefix)
 					created_file = True
 				self.send('cat ' + tmp_filename + ' | wc -l',
 						  expect=expect, child=child, exit_values=['0', '1'],
-						  check_exit=False, escape=True)
+						  check_exit=False, escape=True, do_prefix=do_prefix)
 				res = self.match_string(child.before, '^([0-9]+)$')
 			if res == '0' or force:
 				self.send('cat >> ' + filename + """ <<< '""" + line.replace("'",r"""'"'"'""") + """'""",
-					expect=expect, child=child, check_exit=False, escape=True)
+					expect=expect, child=child, check_exit=False, escape=True, do_prefix=do_prefix)
 				if created_file:
-					self.send('rm -f ' + tmp_filename, expect=expect, child=child, exit_values=['0', '1'])
+					self.send('rm -f ' + tmp_filename, expect=expect, child=child, exit_values=['0', '1'], do_prefix=do_prefix)
 			else:
 				if created_file:
-					self.send('rm -f ' + tmp_filename, expect=expect, child=child, exit_values=['0','1'])
+					self.send('rm -f ' + tmp_filename, expect=expect, child=child, exit_values=['0','1'], do_prefix=do_prefix)
 				return False
 		return True
 
 
 
-	def insert_text(self, text, fname, pattern, expect=None, child=None, before=False, force=False):
+	def insert_text(self, text, fname, pattern, expect=None, child=None, before=False, force=False, do_prefix=True):
 		"""Insert a chunk of text after (or before) the first matching pattern in file fname.
 
 		Returns None if there was no match for the regexp, True if it was matched
@@ -983,6 +1006,7 @@ class ShutIt(object):
 		@param pattern:       regexp to match and insert after
 		@param expect:        See send()
 		@param child:         See send()
+		@param do_prefix:     See send()
 		@param before:        Whether to place the text before or after the matched text.
 		@param force:         Force the insertion even if the text is in the file.
 		"""
@@ -991,7 +1015,7 @@ class ShutIt(object):
 		random_id = shutit_util.random_id()
 		# Find matching line number (n)
 		# TODO: replace " in pattern with \"
-		line_number = self.send_and_get_output(r'''grep -n -m 1 "''' + pattern + '''" ''' + fname + ''' | cut -d: -f1''').strip()
+		line_number = self.send_and_get_output(r'''grep -n -m 1 "''' + pattern + '''" ''' + fname + ''' | cut -d: -f1''', do_prefix=do_prefix, child=child, expect=expect)
 		# If no match, return False
 		if line_number == '':
 			# No output - no match
@@ -999,7 +1023,7 @@ class ShutIt(object):
 		if line_number[0] not in ('1','2','3','4','5','6','7','8','9'):
 			# Something went wrong
 			return False
-		ftext = self.send_and_get_output('cat ' + fname)
+		ftext = self.send_and_get_output('cat ' + fname, do_prefix=do_prefix, child=child, expect=expect)
 		# Replace the file text's ^M-newlines with simple newlines
 		ftext = ftext.replace('\r\n','\n')
 		# If we are not forcing and the text is already in the file, then don't insert.
@@ -1024,18 +1048,18 @@ class ShutIt(object):
 		# Then put, for each line, '> ' + line added file (f)
 		file_text += '\n'
 		diff_fname = '/tmp/shutit_' + random_id
-		self.send_file(diff_fname, file_text, expect=expect, child=child)
+		self.send_file(diff_fname, file_text, expect=expect, child=child, do_prefix=do_prefix)
 		# Install patch - TODO: make more elegant
 		self.install('patch')
 		# Run: patch fname (f)
-		self.send('patch ' + fname + ' ' + diff_fname, expect=expect, child=child)
+		self.send('patch ' + fname + ' ' + diff_fname, expect=expect, child=child, do_prefix=do_prefix)
 		# Delete diff file
-		self.send('rm -f ' + diff_fname, check_exit=False, expect=expect, child=child)
+		self.send('rm -f ' + diff_fname, check_exit=False, expect=expect, child=child, do_prefix=do_prefix)
 		return True
 
 
 
-	def add_to_bashrc(self, line, expect=None, child=None, match_regexp=None):
+	def add_to_bashrc(self, line, expect=None, child=None, match_regexp=None, do_prefix=True):
 		"""Takes care of adding a line to everyone's bashrc
 		(/etc/bash.bashrc, /etc/profile).
 
@@ -1043,14 +1067,15 @@ class ShutIt(object):
 		@param expect:        See send()
 		@param child:         See send()
 		@param match_regexp:  See add_line_to_file()
+		@param do_prefix:     See send()
 
 		@return:              See add_line_to_file()
 		"""
 		child = child or self.get_default_child()
 		expect = expect or self.get_default_expect()
-		self.add_line_to_file(line, '${HOME}/.bashrc', expect=expect, match_regexp=match_regexp) # This won't work for root - TODO
-		self.add_line_to_file(line, '/etc/bash.bashrc', expect=expect, match_regexp=match_regexp)
-		return self.add_line_to_file(line, '/etc/profile', expect=expect, match_regexp=match_regexp)
+		self.add_line_to_file(line, '${HOME}/.bashrc', expect=expect, match_regexp=match_regexp, do_prefix=do_prefix, child=child) # This won't work for root - TODO
+		self.add_line_to_file(line, '/etc/bash.bashrc', expect=expect, match_regexp=match_regexp, child=child, do_prefix=do_prefix)
+		return self.add_line_to_file(line, '/etc/profile', expect=expect, match_regexp=match_regexp, child=child, do_prefix=do_prefix)
 
 
 	def get_url(self,
@@ -1064,7 +1089,8 @@ class ShutIt(object):
 	            record_command=True,
 	            exit_values=None,
 	            echo=False,
-	            retry=3):
+	            retry=3,
+	            do_prefix=True):
 		"""Handles the getting of a url for you.
 
 		Example:
@@ -1080,6 +1106,7 @@ class ShutIt(object):
 		@param record_command:       See send()
 		@param exit_values:          See send()
 		@param echo:                 See send()
+		@param do_prefix:            See send()
 		@param retry:                How many times to retry the download
 		                             in case of failure. Default: 3
 
@@ -1101,7 +1128,7 @@ class ShutIt(object):
 				location = location[0:-1]
 			while retry >= 0:
 				send = command + ' ' + location + '/' + filename
-				self.send(send,check_exit=False,child=child,expect=expect,timeout=timeout,fail_on_empty_before=fail_on_empty_before,record_command=record_command,echo=echo)
+				self.send(send,check_exit=False,child=child,expect=expect,timeout=timeout,fail_on_empty_before=fail_on_empty_before,record_command=record_command,echo=echo,do_prefix=do_prefix)
 				if not self._check_exit(send, expect, child, timeout, exit_values, retbool=True):
 					self.log('Sending: ' + send + '\nfailed, retrying')
 					retry = retry - 1
@@ -1178,12 +1205,13 @@ class ShutIt(object):
 			cfg = self.cfg
 			if command in cfg['environment'][cfg['build']['current_environment_id']]['commands_available']:
 				res = True
-			child = child or self.get_default_child()
-			expect = expect or self.get_default_expect()
-			# Don't do_prefix or you'll get a recursive infinite loop!
-			if self.send_and_get_output(' command -v ' + command, expect=expect, child=child, do_prefix=False) != '':
-				cfg['environment'][cfg['build']['current_environment_id']]['commands_available'].append(command)
-				res = True
+			else:
+				child = child or self.get_default_child()
+				expect = expect or self.get_default_expect()
+				# Don't do_prefix or you'll get a recursive infinite loop!
+				if self.send_and_get_output(' command -v ' + command, expect=expect, child=child, do_prefix=False) != '':
+					cfg['environment'][cfg['build']['current_environment_id']]['commands_available'].append(command)
+					res = True
 		except:
 			pass
 		return res
@@ -1214,7 +1242,7 @@ class ShutIt(object):
 			return False
 
 
-	def ls(self, directory):
+	def ls(self, directory, child=None, expect=None):
 		"""Helper proc to list files in a directory
 
 		@param directory:   directory to list.
@@ -1227,10 +1255,12 @@ class ShutIt(object):
 		@rtype:             list of strings
 		"""
 		# should this blow up?
-		if not shutit.file_exists(directory,directory=True):
+		child = child or self.get_default_child()
+		expect = expect or self.get_default_expect()
+		if not shutit.file_exists(directory,directory=True,expect=expect,child=child):
 			shutit.fail('ls: directory\n\n' + directory + '\n\ndoes not exist',
 			    throw_exception=False)
-		files = shutit.send_and_get_output('ls ' + directory)
+		files = shutit.send_and_get_output('ls ' + directory, do_prefix=False, child=child, expect=expect)
 		files = files.split(' ')
 		# cleanout garbage from the terminal - all of this is necessary cause there are
 		# random return characters in the middle of the file names
@@ -1533,22 +1563,23 @@ class ShutIt(object):
 
 
 
-	def send_and_get_output(self, send, expect=None, child=None, retry=3, strip=True, do_prefix=True):
+	def send_and_get_output(self, send, expect=None, child=None, retry=3, strip=True, do_prefix=True, check_exit=False):
 		"""Returns the output of a command run. send() is called, and exit is not checked.
 
-		@param send:      See send()
-		@param expect:    See send()
-		@param child:     See send()
-		@param do_prefix: See send()
-		@param retry:     Number of times to retry command (default 3)
-		@param strip:     Whether to strip output (defaults to True)
+		@param send:       See send()
+		@param expect:     See send()
+		@param child:      See send()
+		@param do_prefix:  See send()
+		@param check_exit: See send()
+		@param retry:      Number of times to retry command (default 3)
+		@param strip:      Whether to strip output (defaults to True)
 
-		@type retry:      integer
-		@type strip:      boolean
+		@type retry:       integer
+		@type strip:       boolean
 		"""
 		child = child or self.get_default_child()
 		expect = expect or self.get_default_expect()
-		self.send(send, child=child, expect=expect, check_exit=False, retry=3, echo=False, do_prefix=do_prefix)
+		self.send(send, child=child, expect=expect, check_exit=check_exit, retry=3, echo=False, do_prefix=do_prefix)
 		if strip:
 			return shutit.get_default_child().before.strip(send).strip()
 		else:
@@ -1771,7 +1802,7 @@ class ShutIt(object):
 			login_expect = expect
 		# We don't fail on empty before as many login programs mess with the output.
 		# In this special case of login we expect either the prompt, or 'user@' as this has been seen to work.
-		self.multisend(send,{'ontinue connecting':'yes','assword':password,'login:':password},expect=[login_expect,user+'@','\r\n.*[@#$]'],check_exit=False,timeout=timeout,fail_on_empty_before=False)
+		self.multisend(send,{'ontinue connecting':'yes','assword':password,'login:':password},expect=[login_expect,user+'@','\r\n.*[@#$]'],check_exit=False,timeout=timeout,fail_on_empty_before=False, do_prefix=False)
 		if prompt_prefix != None:
 			self.setup_prompt(r_id,child=child,prefix=prompt_prefix)
 		else:
@@ -1802,7 +1833,7 @@ class ShutIt(object):
 			self.fail('Logout called without corresponding login', throw_exception=False)
 		# No point in checking exit here, the exit code will be
 		# from the previous command from the logged in session
-		self.send(command, expect=expect, check_exit=False)
+		self.send(command, expect=expect, check_exit=False, do_prefix=False)
 	# alias exit_shell to logout
 	exit_shell = logout
 
